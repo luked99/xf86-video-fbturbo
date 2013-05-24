@@ -135,8 +135,6 @@ xCopyNtoN(DrawablePtr pSrcDrawable,
           int dy,
           Bool reverse, Bool upsidedown, Pixel bitplane, void *closure)
 {
-    CARD8 alu = pGC ? pGC->alu : GXcopy;
-    FbBits pm = pGC ? fbGetGCPrivate(pGC)->pm : FB_ALLONES;
     FbBits *src;
     FbStride srcStride;
     int srcBpp;
@@ -174,6 +172,8 @@ xCopyNtoN(DrawablePtr pSrcDrawable,
 
         /* fallback to fbBlt if other methods did not work */
         if (!done) {
+            // Due to the check in xCopyArea, it is guaranteed that pGC->alu == GXcopy
+            // and the planemask is FB_ALLONES.
             fbBlt(src + (pbox->y1 + dy + srcYoff) * srcStride,
                   srcStride,
                   (pbox->x1 + dx + srcXoff) * srcBpp,
@@ -181,7 +181,7 @@ xCopyNtoN(DrawablePtr pSrcDrawable,
                   dstStride,
                   (pbox->x1 + dstXoff) * dstBpp,
                   (pbox->x2 - pbox->x1) * dstBpp,
-                  (pbox->y2 - pbox->y1), alu, pm, dstBpp, reverse, upsidedown);
+                  (pbox->y2 - pbox->y1), GXcopy, FB_ALLONES, dstBpp, reverse, upsidedown);
         }
         pbox++;
     }
