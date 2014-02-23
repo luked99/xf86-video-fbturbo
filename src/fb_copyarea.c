@@ -25,22 +25,80 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <linux/fb.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
 #include "fb_copyarea.h"
+#include "xf86.h"
 
 /*
  * HACK: non-standard ioctl, which provides access to fb_copyarea accelerated
  * function in the kernel. It just accepts the standard fb_copyarea structure
  * defined in "linux/fb.h" header
  */
+#ifndef FBIOCOPYAREA
 #define FBIOCOPYAREA		_IOW('z', 0x21, struct fb_copyarea)
+#endif
+
+#ifndef FBIOFILLRECT
+#define FBIOFILLRECT            _IOW('z', 0x22, struct fb_fillrect)
+#endif
+
 
 /* Fallback to CPU when handling less than COPYAREA_BLT_SIZE_THRESHOLD pixels */
 #define COPYAREA_BLT_SIZE_THRESHOLD 90
+#define COPYAREA_FILL_SIZE_THRESHOLD (1<<14)
+
+static int do_log = 0;
+#define LOG(...) if (do_log) { ErrorF(__VA_ARGS__); }
+
+static int fb_fill(void *self,
+                   uint32_t *dst_bits,
+                   int dst_stride,
+                   int dst_bpp,
+                   int dst_x,
+                   int dst_y,
+                   int w,
+                   int h,
+                   uint32_t color);
+
+/*
+ * Check whether the FBIOCOPYAREA ioctl is supported by requesting to do
+ * a copy of 1x1 rectangle in the top left corner to itself
+ */
+static Bool fb_has_copyarea(int fd)
+{
+    struct fb_copyarea copyarea;
+    copyarea.sx = 0;
+    copyarea.sy = 0;
+    copyarea.dx = 0;
+    copyarea.dy = 0;
+    copyarea.width = 1;
+    copyarea.height = 1;
+    return ioctl(fd, FBIOCOPYAREA, &copyarea) == 0;
+}
+
+/*
+ * A bit nasty, check if fillrect is supported by filling a
+ * 0x0 rectangle.
+ */
+
+static Bool fb_has_fillrect(int fd)
+{
+    struct fb_fillrect rect;
+    int ret;
+    rect.dx = 0;
+    rect.dy = 0;
+    rect.width = 0;
+    rect.height = 0;
+    rect.rop = ROP_COPY;
+    ret = ioctl(fd, FBIOFILLRECT, &rect) == 0;
+    LOG("%s: ioctl 0x%x => %d\n", __func__, FBIOFILLRECT, ret);
+    return ret;
+}
 
 fb_copyarea_t *fb_copyarea_init(const char *device, void *xserver_fbmem)
 {
@@ -48,6 +106,7 @@ fb_copyarea_t *fb_copyarea_init(const char *device, void *xserver_fbmem)
     struct fb_var_screeninfo fb_var;
     struct fb_fix_screeninfo fb_fix;
     struct fb_copyarea copyarea;
+    Bool has_fillrect;
 
     int tmp, version;
     int gfx_layer_size;
@@ -64,21 +123,13 @@ fb_copyarea_t *fb_copyarea_init(const char *device, void *xserver_fbmem)
         return NULL;
     }
 
-    /*
-     * Check whether the FBIOCOPYAREA ioctl is supported by requesting to do
-     * a copy of 1x1 rectangle in the top left corner to itself
-     */
-    copyarea.sx = 0;
-    copyarea.sy = 0;
-    copyarea.dx = 0;
-    copyarea.dy = 0;
-    copyarea.width = 1;
-    copyarea.height = 1;
-    if (ioctl(ctx->fd, FBIOCOPYAREA, &copyarea) != 0) {
+    if (!fb_has_copyarea(ctx->fd)) {
         close(ctx->fd);
         free(ctx);
         return NULL;
     }
+
+    has_fillrect = fb_has_fillrect(ctx->fd);
 
     if (ioctl(ctx->fd, FBIOGET_VSCREENINFO, &fb_var) < 0 ||
         ioctl(ctx->fd, FBIOGET_FSCREENINFO, &fb_fix) < 0)
@@ -131,6 +182,8 @@ fb_copyarea_t *fb_copyarea_init(const char *device, void *xserver_fbmem)
 
     ctx->blt2d.self = ctx;
     ctx->blt2d.overlapped_blt = fb_copyarea_blt;
+    if (has_fillrect)
+        ctx->blt2d.fill = fb_fill;
 
     return ctx;
 }
@@ -189,6 +242,7 @@ int fb_copyarea_blt(void               *self,
     fb_copyarea_t *ctx = (fb_copyarea_t *)self;
     struct fb_copyarea copyarea;
     uint32_t *framebuffer_addr = (uint32_t *)ctx->framebuffer_addr;
+    int ret;
 
     /* Zero size blit, nothing to do */
     if (w <= 0 || h <= 0)
@@ -209,5 +263,54 @@ int fb_copyarea_blt(void               *self,
     copyarea.dy = dst_y;
     copyarea.width = w;
     copyarea.height = h;
-    return ioctl(ctx->fd, FBIOCOPYAREA, &copyarea) == 0;
+
+    LOG("%s: src %d,%d dst %d,%d size %dx%d\n",
+        __func__,
+        src_x, src_y, dst_x, dst_y, w, h);
+    ret = ioctl(ctx->fd, FBIOCOPYAREA, &copyarea);
+
+    LOG("%s: done\n");
+
+    return ret == 0;
+}
+
+static int fb_fill(void *self,
+                   uint32_t *dst_bits,
+                   int dst_stride,
+                   int dst_bpp,
+                   int dst_x,
+                   int dst_y,
+                   int w,
+                   int h,
+                   uint32_t color)
+{
+    fb_copyarea_t *ctx = self;
+    struct fb_fillrect fillrect;
+    uint32_t *framebuffer_addr = (uint32_t *)ctx->framebuffer_addr;
+    int rc;
+
+    /* Zero size blit, nothing to do */
+    if (w <= 0 || h <= 0)
+        return 1;
+
+    if ((dst_bits != framebuffer_addr) ||
+        (w * h < COPYAREA_FILL_SIZE_THRESHOLD))
+    {
+        return 0;
+    }
+
+    fillrect.dx = dst_x;
+    fillrect.dy = dst_y;
+    fillrect.width = w;
+    fillrect.height = h;
+    fillrect.rop = ROP_COPY;
+    fillrect.color = color;
+    LOG("%s: %d,%d %dx%d bpp %d\n", __func__, dst_x, dst_y, w, h, dst_bpp);
+
+    rc = ioctl(ctx->fd, FBIOFILLRECT, &fillrect);
+    if (rc)
+        LOG("%s: ioctl failed: %s\n", __func__, strerror(errno));
+
+    LOG("%s: done ioctl fill\n", __func__);
+    return rc == 0 ? 1 : 0;
 }
