@@ -44,6 +44,9 @@ typedef struct {
     blt2d_i             blt2d;
     /* Optional fallback interface to handle unsupported operations */
     blt2d_i            *fallback_blt2d;
+
+    unsigned long       dma_fill_threshold;
+    unsigned long       dma_copy_threshold;
 } fb_copyarea_t;
 
 fb_copyarea_t *fb_copyarea_init(const char *fb_device, void *xserver_fbmem);
@@ -62,5 +65,8 @@ int fb_copyarea_blt(void               *self,
                     int                 dst_y,
                     int                 w,
                     int                 h);
+
+void fb_copyarea_set_dma_fill_threshold(fb_copyarea_t *self, unsigned long thresh);
+void fb_copyarea_set_dma_copy_threshold(fb_copyarea_t *self, unsigned long thresh);
 
 #endif

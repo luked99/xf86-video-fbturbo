@@ -129,6 +129,17 @@ Enable or disable the use of display controller hardware overlays for
 XVideo acceleration. Only available on sunxi hardware.
 Default: on if supported, off otherwise.
 
+.TP
+.BI "Option \*qDMAFillThreshold\*q \*q" integer \*q
+Set the threshold (in pixels) at which the driver switches between using
+DMA or the CPU for filling solid regions in the framebuffer. Note that
+the kernel driver has its own threshold on top of this.
+
+.TP
+.BI "Option \*qDMACopyThreshold\*q \*q" integer \*q
+Set the threshold (in pixels) at which the driver switches between using
+DMA or the CPU for copying rectangular regions within the framebuffer.
+
 .SH "SEE ALSO"
 __xservername__(__appmansuffix__), __xconfigfile__(__filemansuffix__), Xserver(__appmansuffix__),
 X(__miscmansuffix__), fbdevhw(__drivermansuffix__)

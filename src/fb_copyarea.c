@@ -50,7 +50,7 @@
 
 /* Fallback to CPU when handling less than COPYAREA_BLT_SIZE_THRESHOLD pixels */
 #define COPYAREA_BLT_SIZE_THRESHOLD 90
-#define COPYAREA_FILL_SIZE_THRESHOLD (1<<14)
+#define COPYAREA_FILL_SIZE_THRESHOLD (1<<24)
 
 static int do_log = 0;
 #define LOG(...) if (do_log) { ErrorF(__VA_ARGS__); }
@@ -185,6 +185,9 @@ fb_copyarea_t *fb_copyarea_init(const char *device, void *xserver_fbmem)
     if (has_fillrect)
         ctx->blt2d.fill = fb_fill;
 
+    ctx->dma_fill_threshold = COPYAREA_FILL_SIZE_THRESHOLD;
+    ctx->dma_copy_threshold = COPYAREA_BLT_SIZE_THRESHOLD;
+
     return ctx;
 }
 
@@ -254,7 +257,7 @@ int fb_copyarea_blt(void               *self,
         return FALLBACK_BLT();
     }
 
-    if (w * h < COPYAREA_BLT_SIZE_THRESHOLD)
+    if (w * h < ctx->dma_copy_threshold)
         return FALLBACK_BLT();
 
     copyarea.sx = src_x;
@@ -294,7 +297,7 @@ static int fb_fill(void *self,
         return 1;
 
     if ((dst_bits != framebuffer_addr) ||
-        (w * h < COPYAREA_FILL_SIZE_THRESHOLD))
+        (w * h < ctx->dma_fill_threshold))
     {
         return 0;
     }
@@ -313,4 +316,14 @@ static int fb_fill(void *self,
 
     LOG("%s: done ioctl fill\n", __func__);
     return rc == 0 ? 1 : 0;
+}
+
+void fb_copyarea_set_dma_fill_threshold(fb_copyarea_t *self, unsigned long thresh)
+{
+    self->dma_fill_threshold = thresh;
+}
+
+void fb_copyarea_set_dma_copy_threshold(fb_copyarea_t *self, unsigned long thresh)
+{
+    self->dma_copy_threshold = thresh;
 }

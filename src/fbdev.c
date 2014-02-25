@@ -173,6 +173,8 @@ typedef enum {
 	OPTION_USE_BS,
 	OPTION_FORCE_BS,
 	OPTION_XV_OVERLAY,
+	OPTION_DMA_FILL_THRESHOLD,
+	OPTION_DMA_COPY_THRESHOLD,
 } FBDevOpts;
 
 static const OptionInfoRec FBDevOptions[] = {
@@ -189,6 +191,8 @@ static const OptionInfoRec FBDevOptions[] = {
 	{ OPTION_USE_BS,	"UseBackingStore",OPTV_BOOLEAN,	{0},	FALSE },
 	{ OPTION_FORCE_BS,	"ForceBackingStore",OPTV_BOOLEAN,{0},	FALSE },
 	{ OPTION_XV_OVERLAY,	"XVHWOverlay",	OPTV_BOOLEAN,	{0},	FALSE },
+	{ OPTION_DMA_FILL_THRESHOLD, "DMAFillThreshold", OPTV_INTEGER,   {0},    FALSE },
+	{ OPTION_DMA_COPY_THRESHOLD, "DMACopyThreshold", OPTV_INTEGER,   {0},    FALSE },
 	{ -1,			NULL,		OPTV_NONE,	{0},	FALSE }
 };
 
@@ -919,6 +923,23 @@ FBDevScreenInit(SCREEN_INIT_ARGS_DECL)
 		fPtr->fb_copyarea_private = fb_copyarea_init(xf86FindOptionValue(
 	                                fPtr->pEnt->device->options,"fbdev"),
 	                                fPtr->fbmem);
+	}
+
+	/* Options for copyarea */
+	if (fPtr->fb_copyarea_private != NULL) {
+		unsigned long dma_fill_threshold, dma_copy_threshold;
+
+		if (xf86GetOptValULong(fPtr->Options, OPTION_DMA_COPY_THRESHOLD, &dma_copy_threshold)) {
+			xf86DrvMsg(pScreen->myNum, X_INFO,
+				"DMA copy threshold set to %ld\n", dma_copy_threshold);
+			fb_copyarea_set_dma_copy_threshold(fPtr->fb_copyarea_private, dma_copy_threshold);
+		}
+
+		if (xf86GetOptValULong(fPtr->Options, OPTION_DMA_FILL_THRESHOLD, &dma_fill_threshold)) {
+			xf86DrvMsg(pScreen->myNum, X_INFO,
+				"DMA fill threshold set to %ld\n", dma_copy_threshold);
+			fb_copyarea_set_dma_fill_threshold(fPtr->fb_copyarea_private, dma_fill_threshold);
+		}
 	}
 
 	if (!(accelmethod = xf86GetOptValString(fPtr->Options, OPTION_ACCELMETHOD)) ||
