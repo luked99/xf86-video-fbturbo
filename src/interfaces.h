@@ -25,6 +25,18 @@
 #define INTERFACES_H
 
 /* A simple interface for 2D graphics operations */
+
+typedef int (*blt2d_fill_f)(
+                void               *self,
+                uint32_t           *bits,
+                int                 stride,
+                int                 bpp,
+                int                 x,
+                int                 y,
+                int                 width,
+                int                 height,
+                uint32_t            color);
+
 typedef struct {
     void *self; /* The pointer which needs to be passed to functions */
     /*
@@ -45,6 +57,8 @@ typedef struct {
                           int       dst_y,
                           int       w,
                           int       h);
+    blt2d_fill_f fill;
+
 } blt2d_i;
 
 #endif

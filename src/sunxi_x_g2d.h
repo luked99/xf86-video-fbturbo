@@ -31,6 +31,7 @@ typedef struct {
 
     CopyWindowProcPtr       CopyWindow;
     CreateGCProcPtr         CreateGC;
+    void (*PolyFillRect)( DrawablePtr, GCPtr, int, xRectangle *);
 
     /* SunxiG2D_Init copies these pointers here from blt2d_i struct */
     void *blt2d_self;
@@ -47,6 +48,17 @@ typedef struct {
                                 int       dst_y,
                                 int       w,
                                 int       h);
+
+    int (*blt2d_fill)(void               *self,
+                      uint32_t           *bits,
+                      int                 stride,
+                      int                 bpp,
+                      int                 x,
+                      int                 y,
+                      int                 width,
+                      int                 height,
+                      uint32_t            color);
+
 } SunxiG2D;
 
 SunxiG2D *SunxiG2D_Init(ScreenPtr pScreen, blt2d_i *blt2d);

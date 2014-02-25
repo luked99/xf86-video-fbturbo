@@ -301,6 +301,134 @@ static void xPutImage(DrawablePtr pDrawable,
     fbFinishAccess(pDrawable);
 }
 
+/* Adapted from fbPolyFillRect and fbFill. */
+
+static void xPolyFillRect(DrawablePtr pDrawable,
+                          GCPtr pGC,
+                          int nrect,
+                          xRectangle * prect)
+{
+    ScreenPtr pScreen;
+    ScrnInfoPtr pScrn;
+    RegionPtr pClip;
+    BoxPtr pbox;
+    BoxPtr pextent;
+    int extentX1, extentX2, extentY1, extentY2;
+    int fullX1, fullX2, fullY1, fullY2;
+    int partX1, partX2, partY1, partY2;
+    int n;
+    FbBits *dst;
+    int dstStride;
+    int dstBpp;
+    int dstXoff, dstYoff;
+    int xorg, yorg;
+    FbGCPrivPtr pPriv;
+    Bool outside_framebuffer;
+    pPriv = fbGetGCPrivate(pGC);
+    FbBits pm = pPriv->pm;
+
+    pScreen = pDrawable->pScreen;
+    pScrn = xf86Screens[pScreen->myNum];
+    SunxiG2D *private = SUNXI_G2D(pScrn);
+
+    if (pGC->fillStyle != FillSolid || pm != FB_ALLONES || pPriv->and) {
+        private->PolyFillRect(pDrawable, pGC, nrect, prect);
+        return;
+    }
+
+    pClip = fbGetCompositeClip(pGC);
+
+    // Note: dstXoff and dstYoff are generally zero or negative.
+    fbGetDrawable(pDrawable, dst, dstStride, dstBpp, dstXoff, dstYoff);
+
+    xorg = pDrawable->x;
+    yorg = pDrawable->y;
+
+    pextent = REGION_EXTENTS(pGC->pScreen, pClip);
+    extentX1 = pextent->x1;
+    extentY1 = pextent->y1;
+    extentX2 = pextent->x2;
+    extentY2 = pextent->y2;
+    while (nrect--)
+    {
+        fullX1 = prect->x + xorg;
+        fullY1 = prect->y + yorg;
+        fullX2 = fullX1 + (int) prect->width;
+        fullY2 = fullY1 + (int) prect->height;
+        prect++;
+
+        if (fullX1 < extentX1)
+            fullX1 = extentX1;
+
+        if (fullY1 < extentY1)
+            fullY1 = extentY1;
+
+         if (fullX2 > extentX2)
+            fullX2 = extentX2;
+
+        if (fullY2 > extentY2)
+            fullY2 = extentY2;
+
+        if ((fullX1 >= fullX2) || (fullY1 >= fullY2))
+            continue;
+        n = REGION_NUM_RECTS (pClip);
+        if (n == 1)
+        {
+            Bool done = FALSE;
+            int x ,y, w, h;
+            x = fullX1 + dstXoff;
+            y = fullY1 + dstYoff;
+            w = fullX2 - fullX1;
+            h = fullY2 - fullY1;
+            if (!pPriv->and)
+                done = private->blt2d_fill(private->blt2d_self, (uint32_t *)dst, dstStride, dstBpp, x, y, w, h, pPriv->xor);
+            if (!done)
+                if (pPriv->and || !pixman_fill((uint32_t *)dst, dstStride, dstBpp, x, y, w, h, pPriv->xor))
+                    fbSolid(dst + y * dstStride, dstStride, x * dstBpp, dstBpp, w * dstBpp, h, pPriv->and, pPriv->xor);
+        }
+        else
+        {
+            pbox = REGION_RECTS(pClip);
+            /*
+             * clip the rectangle to each box in the clip region
+             * this is logically equivalent to calling Intersect()
+             */
+            while(n--)
+            {
+                partX1 = pbox->x1;
+                if (partX1 < fullX1)
+                    partX1 = fullX1;
+                partY1 = pbox->y1;
+                if (partY1 < fullY1)
+                    partY1 = fullY1;
+                partX2 = pbox->x2;
+                if (partX2 > fullX2)
+                    partX2 = fullX2;
+                partY2 = pbox->y2;
+                if (partY2 > fullY2)
+                    partY2 = fullY2;
+
+                pbox++;
+
+                if (partX1 < partX2 && partY1 < partY2) {
+                    Bool done = FALSE;
+                    int w, h;
+                    int x = partX1 + dstXoff;
+                    int y = partY1 + dstYoff;
+                    w = partX2 - partX1;
+                    h = partY2 - partY1;
+                    if (!pPriv->and)
+                        done = private->blt2d_fill(private->blt2d_self, (uint32_t *)dst, dstStride, dstBpp, x, y, w, h, pPriv->xor);
+                    if (!done)
+                        if (pPriv->and || !pixman_fill((uint32_t *)dst, dstStride, dstBpp, x, y, w, h, pPriv->xor))
+                            fbSolid(dst + y * dstStride, dstStride, x * dstBpp, dstBpp, w * dstBpp, h, pPriv->and, pPriv->xor);
+                }
+            }
+        }
+    }
+    fbFinishAccess(pDrawable);
+}
+
 static Bool
 xCreateGC(GCPtr pGC)
 {
@@ -320,6 +448,11 @@ xCreateGC(GCPtr pGC)
         self->pGCOps->CopyArea = xCopyArea;
         /* Add our own hook for PutImage */
         self->pGCOps->PutImage = xPutImage;
+        /* Add our own hook for PolyFillRect */
+        if (self->blt2d_fill) {
+            self->PolyFillRect = self->pGCOps->PolyFillRect;
+            self->pGCOps->PolyFillRect = xPolyFillRect;
+        }
     }
     pGC->ops = self->pGCOps;
 
@@ -340,6 +473,7 @@ SunxiG2D *SunxiG2D_Init(ScreenPtr pScreen, blt2d_i *blt2d)
     /* Cache the pointers from blt2d_i here */
     private->blt2d_self = blt2d->self;
     private->blt2d_overlapped_blt = blt2d->overlapped_blt;
+    private->blt2d_fill = blt2d->fill;
 
     /* Wrap the current CopyWindow function */
     private->CopyWindow = pScreen->CopyWindow;
